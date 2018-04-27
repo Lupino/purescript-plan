@@ -1,6 +1,7 @@
 module Plan.Trans
   ( Param (..)
   , ActionT
+  , options
   , params
   , param
   , Pattern (..)
@@ -33,51 +34,55 @@ import Partial.Unsafe (unsafePartial)
 import Data.String.Regex (Regex, match, regex, replace)
 import Data.String.Regex.Flags (noFlags, global)
 import Data.String (takeWhile, drop)
+import Data.Tuple (Tuple (..), snd, fst)
 
 data Param = Param String String
 
 derive instance eqParam :: Eq Param
 derive instance ordParam :: Ord Param
 
-newtype ActionT m a = ActionT (ExceptT Error (ReaderT (Array Param) m) a)
+newtype ActionT opts m a = ActionT (ExceptT Error (ReaderT (Tuple opts (Array Param)) m) a)
 
-runActionT :: forall m a. Array Param -> ActionT m a -> m (Either Error a)
-runActionT p (ActionT m)= flip runReaderT p $ runExceptT m
+runActionT :: forall opts m a. opts -> Array Param -> ActionT opts m a -> m (Either Error a)
+runActionT opts p (ActionT m)= flip runReaderT (Tuple opts p) $ runExceptT m
 
-derive instance newtypeActionT :: Newtype (ActionT m a) _
+derive instance newtypeActionT :: Newtype (ActionT opts m a) _
 
-instance functorActionT :: Functor m => Functor (ActionT m) where
+instance functorActionT :: Functor m => Functor (ActionT opts m) where
   map f (ActionT m) = ActionT $ map f m
 
-instance applyActionT :: Monad m => Apply (ActionT m) where
+instance applyActionT :: Monad m => Apply (ActionT opts m) where
   apply = ap
 
-instance applicativeActionT :: Monad m => Applicative (ActionT m) where
+instance applicativeActionT :: Monad m => Applicative (ActionT opts m) where
   pure = ActionT <<< pure
 
-instance bindActionT :: Monad m => Bind (ActionT m) where
+instance bindActionT :: Monad m => Bind (ActionT opts m) where
   bind (ActionT m) k = ActionT $ do
     a <- m
     case k a of
       ActionT b -> b
 
-instance monadActionT :: Monad m => Monad (ActionT m)
+instance monadActionT :: Monad m => Monad (ActionT opts m)
 
-instance monadTransActionT :: MonadTrans ActionT where
+instance monadTransActionT :: MonadTrans (ActionT opts) where
   lift = ActionT <<< lift <<< lift
 
-instance monadEffActionT :: MonadEff eff m => MonadEff eff (ActionT m) where
+instance monadEffActionT :: MonadEff eff m => MonadEff eff (ActionT opts m) where
   liftEff = lift <<< liftEff
 
-instance monadAffActionT :: MonadAff eff m => MonadAff eff (ActionT m) where
+instance monadAffActionT :: MonadAff eff m => MonadAff eff (ActionT opts m) where
   liftAff = lift <<< liftAff
 
-params :: forall m. Monad m => ActionT m (Array Param)
-params = ActionT $ ask
+options :: forall opts m. Monad m => ActionT opts m opts
+options = ActionT $ fst <$> ask
 
-param :: forall m. Monad m => String -> ActionT m String
+params :: forall opts m. Monad m => ActionT opts m (Array Param)
+params = ActionT $ snd <$> ask
+
+param :: forall opts m. Monad m => String -> ActionT opts m String
 param k = ActionT $ do
-  xs <- ask
+  xs <- snd <$> ask
   except $ go (head xs) (tail xs)
   where go :: Maybe Param -> Maybe (Array Param) -> Either Error String
         go Nothing _ = leftErr
@@ -121,64 +126,64 @@ paramPattern xs = Pattern go
           where toParam :: String -> String -> Param
                 toParam k v = Param (takeWhile (_ /= ':') $ drop 1 k) v
 
-data Route m a = Route Pattern (ActionT m a)
+data Route opts m a = Route Pattern (ActionT opts m a)
 
-newtype RouteRef m a = RouteRef (Ref (Array (Route m a)))
-derive instance newtypeRouteRef :: Newtype (RouteRef m a) _
+newtype RouteRef opts m a = RouteRef (Ref (Array (Route opts m a)))
+derive instance newtypeRouteRef :: Newtype (RouteRef opts m a) _
 
-initRouteRef :: forall r m a. Eff (ref :: REF | r) (RouteRef m a)
+initRouteRef :: forall opts r m a. Eff (ref :: REF | r) (RouteRef opts m a)
 initRouteRef = map RouteRef $ newRef []
 
-addRoute :: forall r m a. RouteRef m a -> Route m a -> Eff (ref :: REF | r) Unit
+addRoute :: forall opts r m a. RouteRef opts m a -> Route opts m a -> Eff (ref :: REF | r) Unit
 addRoute (RouteRef ref) x = modifyRef ref $ \xs -> concat [xs, [x]]
 
-routes :: forall r m a. RouteRef m a -> Eff (ref :: REF | r) (Array (Route m a))
+routes :: forall opts r m a. RouteRef opts m a -> Eff (ref :: REF | r) (Array (Route opts m a))
 routes (RouteRef ref) = readRef ref
 
-newtype PlanT a m b = PlanT (ReaderT (RouteRef m a) m b)
+newtype PlanT opts a m b = PlanT (ReaderT (RouteRef opts m a) m b)
 
-runPlanT :: forall a b m. Monad m => RouteRef m a -> PlanT a m b -> m b
+runPlanT :: forall opts a b m. Monad m => RouteRef opts m a -> PlanT opts a m b -> m b
 runPlanT ref (PlanT m) = runReaderT m ref
 
-derive instance newtypePlanT :: Newtype (PlanT a m b) _
+derive instance newtypePlanT :: Newtype (PlanT opts a m b) _
 
-instance functorPlanT :: Functor m => Functor (PlanT a m) where
+instance functorPlanT :: Functor m => Functor (PlanT opts a m) where
   map f (PlanT m) = PlanT $ map f m
 
-instance applyPlanT :: Monad m => Apply (PlanT a m) where
+instance applyPlanT :: Monad m => Apply (PlanT opts a m) where
   apply = ap
 
-instance applicativePlanT :: Monad m => Applicative (PlanT a m) where
+instance applicativePlanT :: Monad m => Applicative (PlanT opts a m) where
   pure = PlanT <<< pure
 
-instance bindPlanT :: Monad m => Bind (PlanT a m) where
+instance bindPlanT :: Monad m => Bind (PlanT opts a m) where
   bind (PlanT m) k = PlanT $ do
     a <- m
     case k a of
       PlanT b -> b
 
-instance monadPlanT :: Monad m => Monad (PlanT a m)
+instance monadPlanT :: Monad m => Monad (PlanT opts a m)
 
-instance monadTransPlanT :: MonadTrans (PlanT a) where
+instance monadTransPlanT :: MonadTrans (PlanT opts a) where
   lift = PlanT <<< lift
 
-instance monadEffPlanT :: MonadEff eff m => MonadEff eff (PlanT a m) where
+instance monadEffPlanT :: MonadEff eff m => MonadEff eff (PlanT opts a m) where
   liftEff = lift <<< liftEff
 
-instance monadAffPlanT :: MonadAff eff m => MonadAff eff (PlanT a m) where
+instance monadAffPlanT :: MonadAff eff m => MonadAff eff (PlanT opts a m) where
   liftAff = lift <<< liftAff
 
-instance monadAskPlanT :: Monad m => MonadAsk (RouteRef m a) (PlanT a m) where
+instance monadAskPlanT :: Monad m => MonadAsk (RouteRef opts m a) (PlanT opts a m) where
   ask = PlanT ask
 
-respond :: forall a m r. MonadEff (ref :: REF | r) m => Pattern -> ActionT m a -> PlanT a m Unit
+respond :: forall opts a m r. MonadEff (ref :: REF | r) m => Pattern -> ActionT opts m a -> PlanT opts a m Unit
 respond pat action = liftEff <<< flip addRoute (Route pat action) =<< ask
 
-data MatchRoute m a = MatchRoute (Array Param) (ActionT m a)
+data MatchRoute opts m a = MatchRoute (Array Param) (ActionT opts m a)
 
-matchRoute :: forall m a. String -> Array (Route m a) -> Maybe (MatchRoute m a)
+matchRoute :: forall opts m a. String -> Array (Route opts m a) -> Maybe (MatchRoute opts m a)
 matchRoute xs rs = go (head rs) (tail rs)
-  where go :: forall m0 a0. Maybe (Route m0 a0) -> Maybe (Array (Route m0 a0)) -> Maybe (MatchRoute m0 a0)
+  where go :: forall opts0 m0 a0. Maybe (Route opts0 m0 a0) -> Maybe (Array (Route opts0 m0 a0)) -> Maybe (MatchRoute opts0 m0 a0)
         go Nothing _ = Nothing
         go (Just (Route (Pattern f) m)) ys =
           case f xs of
@@ -188,10 +193,10 @@ matchRoute xs rs = go (head rs) (tail rs)
                 Nothing -> Nothing
                 Just ys' -> go (head ys') (tail ys')
 
-reply :: forall a m r. MonadEff (ref :: REF | r) m => String -> PlanT a m (Either Error a)
-reply xs = do
+reply :: forall opts a m r. MonadEff (ref :: REF | r) m => opts -> String -> PlanT opts a m (Either Error a)
+reply opts xs = do
   ref <- ask
   rs <- liftEff $ routes ref
   case matchRoute xs rs of
     Nothing -> pure $ Left $ error "route not found."
-    Just (MatchRoute ps m) -> lift $ runActionT ps m
+    Just (MatchRoute ps m) -> lift $ runActionT opts ps m
