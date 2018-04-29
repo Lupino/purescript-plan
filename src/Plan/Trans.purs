@@ -115,7 +115,9 @@ reSpecParam = unsafePartial $ fromRight $ regex ":[^:]+:" global
 paramPattern :: String -> Pattern
 paramPattern xs = Pattern go
   where reg = unsafePartial $ fromRight $ regex ("^" <> replace reSpecParam "(.+)" xs <> "$") noFlags
-        keys = catMaybes <$> match reSpecParam xs
+        keys = case (catMaybes <$> match reSpecParam xs) of
+                 Nothing -> Just []
+                 Just v -> Just v
 
         go :: String -> Maybe (Array Param)
         go ys = do
