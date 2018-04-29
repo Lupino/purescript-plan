@@ -4,7 +4,8 @@
   "description": "A simple chat runner write by purescript",
   "scripts": {
     "publish": "bower install && pulp publish",
-    "build": "pulp build"
+    "build": "pulp -w build",
+    "test": "pulp -w test"
   },
   "devDependencies": {
     "bower": "^1.8.4",
