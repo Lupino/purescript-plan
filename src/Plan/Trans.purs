@@ -21,19 +21,20 @@ import Control.Monad.Reader.Trans (ReaderT, runReaderT)
 import Control.Monad.Except.Trans (ExceptT, runExceptT, except)
 import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Reader.Class (class MonadAsk, ask)
-import Control.Monad.Eff.Ref (REF, Ref, newRef, readRef, modifyRef)
+import Effect.Ref (Ref, new, read, modify)
 import Data.Maybe (Maybe (..))
 import Data.Either (Either (..), fromRight)
 import Data.Newtype (class Newtype)
-import Data.Array (head, tail, mapWithIndex, catMaybes, zipWith, concat)
-import Control.Monad.Eff.Exception (Error, error)
-import Control.Monad.Eff.Class (class MonadEff, liftEff)
-import Control.Monad.Aff.Class (class MonadAff, liftAff)
-import Control.Monad.Eff (Eff)
+import Data.Array (head, tail, mapWithIndex, zipWith, concat)
+import Data.Array.NonEmpty (catMaybes)
+import Effect.Exception (Error, error)
+import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect (Effect)
 import Partial.Unsafe (unsafePartial)
 import Data.String.Regex (Regex, match, regex, replace)
 import Data.String.Regex.Flags (noFlags, global)
-import Data.String (takeWhile, drop)
+import Data.String (takeWhile, drop, codePointFromChar)
 import Data.Tuple (Tuple (..), snd, fst)
 
 data Param = Param String String
@@ -68,10 +69,10 @@ instance monadActionT :: Monad m => Monad (ActionT opts m)
 instance monadTransActionT :: MonadTrans (ActionT opts) where
   lift = ActionT <<< lift <<< lift
 
-instance monadEffActionT :: MonadEff eff m => MonadEff eff (ActionT opts m) where
-  liftEff = lift <<< liftEff
+instance monadEffActionT :: MonadEffect m => MonadEffect (ActionT opts m) where
+  liftEffect = lift <<< liftEffect
 
-instance monadAffActionT :: MonadAff eff m => MonadAff eff (ActionT opts m) where
+instance monadAffActionT :: MonadAff m => MonadAff (ActionT opts m) where
   liftAff = lift <<< liftAff
 
 options :: forall opts m. Monad m => ActionT opts m opts
@@ -126,21 +127,21 @@ paramPattern xs = Pattern go
           vs' <- tail vs
           pure $ zipWith toParam ks vs'
           where toParam :: String -> String -> Param
-                toParam k v = Param (takeWhile (_ /= ':') $ drop 1 k) v
+                toParam k v = Param (takeWhile (_ /= codePointFromChar ':') $ drop 1 k) v
 
 data Route opts m a = Route Pattern (ActionT opts m a)
 
 newtype RouteRef opts m a = RouteRef (Ref (Array (Route opts m a)))
 derive instance newtypeRouteRef :: Newtype (RouteRef opts m a) _
 
-initRouteRef :: forall opts r m a. Eff (ref :: REF | r) (RouteRef opts m a)
-initRouteRef = map RouteRef $ newRef []
+initRouteRef :: forall opts m a. Effect (RouteRef opts m a)
+initRouteRef = map RouteRef $ new []
 
-addRoute :: forall opts r m a. RouteRef opts m a -> Route opts m a -> Eff (ref :: REF | r) Unit
-addRoute (RouteRef ref) x = modifyRef ref $ \xs -> concat [xs, [x]]
+addRoute :: forall opts m a. RouteRef opts m a -> Route opts m a -> Effect Unit
+addRoute (RouteRef ref) x = void $ modify (\xs -> concat [xs, [x]]) ref
 
-routes :: forall opts r m a. RouteRef opts m a -> Eff (ref :: REF | r) (Array (Route opts m a))
-routes (RouteRef ref) = readRef ref
+routes :: forall opts m a. RouteRef opts m a -> Effect (Array (Route opts m a))
+routes (RouteRef ref) = read ref
 
 newtype PlanT opts a m b = PlanT (ReaderT (RouteRef opts m a) m b)
 
@@ -169,17 +170,17 @@ instance monadPlanT :: Monad m => Monad (PlanT opts a m)
 instance monadTransPlanT :: MonadTrans (PlanT opts a) where
   lift = PlanT <<< lift
 
-instance monadEffPlanT :: MonadEff eff m => MonadEff eff (PlanT opts a m) where
-  liftEff = lift <<< liftEff
+instance monadEffPlanT :: MonadEffect m => MonadEffect (PlanT opts a m) where
+  liftEffect = lift <<< liftEffect
 
-instance monadAffPlanT :: MonadAff eff m => MonadAff eff (PlanT opts a m) where
+instance monadAffPlanT :: MonadAff m => MonadAff (PlanT opts a m) where
   liftAff = lift <<< liftAff
 
 instance monadAskPlanT :: Monad m => MonadAsk (RouteRef opts m a) (PlanT opts a m) where
   ask = PlanT ask
 
-respond :: forall opts a m r. MonadEff (ref :: REF | r) m => Pattern -> ActionT opts m a -> PlanT opts a m Unit
-respond pat action = liftEff <<< flip addRoute (Route pat action) =<< ask
+respond :: forall opts a m. MonadEffect m => Pattern -> ActionT opts m a -> PlanT opts a m Unit
+respond pat action = liftEffect <<< flip addRoute (Route pat action) =<< ask
 
 data MatchRoute opts m a = MatchRoute (Array Param) (ActionT opts m a)
 
@@ -195,10 +196,10 @@ matchRoute xs rs = go (head rs) (tail rs)
                 Nothing -> Nothing
                 Just ys' -> go (head ys') (tail ys')
 
-reply :: forall opts a m r. MonadEff (ref :: REF | r) m => opts -> String -> PlanT opts a m (Either Error a)
+reply :: forall opts a m. MonadEffect m => opts -> String -> PlanT opts a m (Either Error a)
 reply opts xs = do
   ref <- ask
-  rs <- liftEff $ routes ref
+  rs <- liftEffect $ routes ref
   case matchRoute xs rs of
     Nothing -> pure $ Left $ error "route not found."
     Just (MatchRoute ps m) -> lift $ runActionT opts ps m
