@@ -6,8 +6,14 @@ module Plan.Trans
   , param
   , Pattern (..)
   , regexPattern
-  , regexPattern_
+  , regexPattern'
+
   , paramPattern
+  , mkParamPattern_
+  , mkParamPattern_'
+  , mkParamPattern
+  , paramPattern_
+
   , RouteRef
   , initRouteRef
   , PlanT
@@ -98,8 +104,8 @@ newtype Pattern = Pattern (String -> Maybe (Array Param))
 
 derive instance newtypePattern :: Newtype Pattern _
 
-regexPattern_ :: Regex -> Pattern
-regexPattern_ reg = Pattern go
+regexPattern :: Regex -> Pattern
+regexPattern reg = Pattern go
   where go :: String -> Maybe (Array Param)
         go xs = do
           m <- match reg xs
@@ -107,27 +113,33 @@ regexPattern_ reg = Pattern go
           where toParam :: Int -> String -> Param
                 toParam idx v = Param (show idx) v
 
-regexPattern :: String -> Pattern
-regexPattern = unsafePartial $ fromRight <<< map regexPattern_ <<< flip regex noFlags
-
-reSpecParam :: Regex
-reSpecParam = unsafePartial $ fromRight $ regex ":[^:]+:" global
+regexPattern' :: String -> Pattern
+regexPattern' = unsafePartial $ fromRight <<< map regexPattern <<< flip regex noFlags
 
 paramPattern :: String -> Pattern
-paramPattern xs = Pattern go
-  where reg = unsafePartial $ fromRight $ regex ("^" <> replace reSpecParam "(.+)" xs <> "$") noFlags
-        keys = case (catMaybes <$> match reSpecParam xs) of
-                 Nothing -> Just []
-                 Just v -> Just v
+paramPattern = mkParamPattern go ":[^:]+:" "(.+)"
+  where go :: String -> String
+        go = takeWhile (_ /= codePointFromChar ':') <<< drop 1
 
-        go :: String -> Maybe (Array Param)
-        go ys = do
-          vs <- catMaybes <$> match reg ys
-          ks <- keys
-          vs' <- tail vs
-          pure $ zipWith toParam ks vs'
-          where toParam :: String -> String -> Param
-                toParam k v = Param (takeWhile (_ /= codePointFromChar ':') $ drop 1 k) v
+mkParamPattern :: (String -> String) -> String -> String -> String -> Pattern
+mkParamPattern preprocess spec target xs = mkParamPattern_' keys reg
+  where specReg = unsafePartial $ fromRight $ regex spec global
+        reg = "^" <> replace specReg target xs <> "$"
+        keys = case (catMaybes <$> match specReg xs) of
+                 Nothing -> []
+                 Just v -> map preprocess v
+
+mkParamPattern_' :: Array String -> String -> Pattern
+mkParamPattern_' keys =
+  unsafePartial $ fromRight <<< map (mkParamPattern_ keys) <<< flip regex noFlags
+
+mkParamPattern_ :: Array String -> Regex -> Pattern
+mkParamPattern_ keys reg = paramPattern_ keys go
+  where go :: String -> Maybe (Array String)
+        go ys = tail =<< catMaybes <$> match reg ys
+
+paramPattern_ :: Array String -> (String -> Maybe (Array String)) -> Pattern
+paramPattern_ keys values = Pattern $ \xs -> zipWith Param keys <$> values xs
 
 data Route opts m a = Route Pattern (ActionT opts m a)
 
