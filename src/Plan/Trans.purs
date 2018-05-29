@@ -28,7 +28,7 @@ import Control.Monad.Except.Trans (ExceptT, runExceptT, except)
 import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Reader.Class (class MonadAsk, ask)
 import Effect.Ref (Ref, new, read, modify)
-import Data.Maybe (Maybe (..))
+import Data.Maybe (Maybe (..), maybe)
 import Data.Either (Either (..), fromRight, note)
 import Data.Newtype (class Newtype)
 import Data.Array (tail, mapWithIndex, zipWith, concat, findMap)
@@ -123,9 +123,7 @@ mkParamPattern :: (String -> String) -> String -> String -> String -> Pattern
 mkParamPattern preprocess spec target xs = mkParamPattern_ keys reg
   where specReg = unsafeRegex spec global
         reg = unsafeRegex ("^" <> replace specReg target xs <> "$") noFlags
-        keys = case (catMaybes <$> match specReg xs) of
-                 Nothing -> []
-                 Just v -> map preprocess v
+        keys = maybe [] (map preprocess) $ catMaybes <$> match specReg xs
 
 mkParamPattern_ :: Array String -> Regex -> Pattern
 mkParamPattern_ keys reg = paramPattern_ keys go
