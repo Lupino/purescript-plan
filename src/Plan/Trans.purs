@@ -42,6 +42,7 @@ import Data.String.Regex (Regex, match, regex, replace)
 import Data.String.Regex.Flags (noFlags, global, RegexFlags)
 import Data.String (takeWhile, drop, codePointFromChar)
 import Data.Tuple (Tuple (..), snd, fst)
+import Control.Monad.Error.Class (class MonadThrow, throwError, class MonadError, catchError)
 
 data Param = Param String String
 
@@ -80,6 +81,13 @@ instance monadEffectActionT :: MonadEffect m => MonadEffect (ActionT opts m) whe
 
 instance monadAffActionT :: MonadAff m => MonadAff (ActionT opts m) where
   liftAff = lift <<< liftAff
+
+instance monadThrowActionT :: MonadThrow Error m => MonadThrow Error (ActionT opts m) where
+  throwError = ActionT <<< throwError
+
+instance monadErrorActionT :: MonadError Error m => MonadError Error (ActionT opts m) where
+  catchError (ActionT m) h =
+    ActionT $ catchError m (\e -> case h e of ActionT f -> f)
 
 options :: forall opts m. Monad m => ActionT opts m opts
 options = ActionT $ fst <$> ask
