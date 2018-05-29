@@ -4,15 +4,15 @@ module Plan.Trans
   , options
   , params
   , param
+
   , Pattern (..)
   , regexPattern
   , regexPattern'
-
   , paramPattern
   , mkParamPattern_
-  , mkParamPattern_'
   , mkParamPattern
   , paramPattern_
+  , unsafeRegex
 
   , RouteRef
   , initRouteRef
@@ -39,7 +39,7 @@ import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect (Effect)
 import Partial.Unsafe (unsafePartial)
 import Data.String.Regex (Regex, match, regex, replace)
-import Data.String.Regex.Flags (noFlags, global)
+import Data.String.Regex.Flags (noFlags, global, RegexFlags)
 import Data.String (takeWhile, drop, codePointFromChar)
 import Data.Tuple (Tuple (..), snd, fst)
 
@@ -108,8 +108,11 @@ regexPattern reg = Pattern go
           where toParam :: Int -> String -> Param
                 toParam idx v = Param (show idx) v
 
+unsafeRegex :: String -> RegexFlags -> Regex
+unsafeRegex re = unsafePartial $ fromRight <<< regex re
+
 regexPattern' :: String -> Pattern
-regexPattern' = unsafePartial $ fromRight <<< map regexPattern <<< flip regex noFlags
+regexPattern' = regexPattern <<< flip unsafeRegex noFlags
 
 paramPattern :: String -> Pattern
 paramPattern = mkParamPattern go ":[^:]+:" "(.+)"
@@ -117,16 +120,12 @@ paramPattern = mkParamPattern go ":[^:]+:" "(.+)"
         go = takeWhile (_ /= codePointFromChar ':') <<< drop 1
 
 mkParamPattern :: (String -> String) -> String -> String -> String -> Pattern
-mkParamPattern preprocess spec target xs = mkParamPattern_' keys reg
-  where specReg = unsafePartial $ fromRight $ regex spec global
-        reg = "^" <> replace specReg target xs <> "$"
+mkParamPattern preprocess spec target xs = mkParamPattern_ keys reg
+  where specReg = unsafeRegex spec global
+        reg = unsafeRegex ("^" <> replace specReg target xs <> "$") noFlags
         keys = case (catMaybes <$> match specReg xs) of
                  Nothing -> []
                  Just v -> map preprocess v
-
-mkParamPattern_' :: Array String -> String -> Pattern
-mkParamPattern_' keys =
-  unsafePartial $ fromRight <<< map (mkParamPattern_ keys) <<< flip regex noFlags
 
 mkParamPattern_ :: Array String -> Regex -> Pattern
 mkParamPattern_ keys reg = paramPattern_ keys go
