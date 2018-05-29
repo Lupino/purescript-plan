@@ -4,6 +4,7 @@ module Plan.Trans
   , options
   , params
   , param
+  , exit
 
   , Pattern (..)
   , regexPattern
@@ -102,6 +103,9 @@ param k = ActionT $ except <<< note err <<< findMap doMap =<< snd <$> ask
                            | otherwise = Nothing
 
         err = error $ "param: " <> k <> " is required"
+
+exit :: forall opts m a. Monad m => ActionT opts m a
+exit = ActionT $ except $ Left $ error "EXIT"
 
 newtype Pattern = Pattern (String -> Maybe (Array Param))
 
