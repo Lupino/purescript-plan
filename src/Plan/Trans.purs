@@ -75,7 +75,7 @@ instance monadActionT :: Monad m => Monad (ActionT opts m)
 instance monadTransActionT :: MonadTrans (ActionT opts) where
   lift = ActionT <<< lift <<< lift
 
-instance monadEffActionT :: MonadEffect m => MonadEffect (ActionT opts m) where
+instance monadEffectActionT :: MonadEffect m => MonadEffect (ActionT opts m) where
   liftEffect = lift <<< liftEffect
 
 instance monadAffActionT :: MonadAff m => MonadAff (ActionT opts m) where
@@ -176,7 +176,7 @@ instance monadPlanT :: Monad m => Monad (PlanT opts a m)
 instance monadTransPlanT :: MonadTrans (PlanT opts a) where
   lift = PlanT <<< lift
 
-instance monadEffPlanT :: MonadEffect m => MonadEffect (PlanT opts a m) where
+instance monadEffectPlanT :: MonadEffect m => MonadEffect (PlanT opts a m) where
   liftEffect = lift <<< liftEffect
 
 instance monadAffPlanT :: MonadAff m => MonadAff (PlanT opts a m) where
