@@ -29,9 +29,9 @@ import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Reader.Class (class MonadAsk, ask)
 import Effect.Ref (Ref, new, read, modify)
 import Data.Maybe (Maybe (..))
-import Data.Either (Either (..), fromRight)
+import Data.Either (Either (..), fromRight, note)
 import Data.Newtype (class Newtype)
-import Data.Array (head, tail, mapWithIndex, zipWith, concat)
+import Data.Array (tail, mapWithIndex, zipWith, concat, findMap)
 import Data.Array.NonEmpty (catMaybes)
 import Effect.Exception (Error, error)
 import Effect.Class (class MonadEffect, liftEffect)
@@ -88,17 +88,12 @@ params :: forall opts m. Monad m => ActionT opts m (Array Param)
 params = ActionT $ snd <$> ask
 
 param :: forall opts m. Monad m => String -> ActionT opts m String
-param k = ActionT $ do
-  xs <- snd <$> ask
-  except $ go (head xs) (tail xs)
-  where go :: Maybe Param -> Maybe (Array Param) -> Either Error String
-        go Nothing _ = leftErr
-        go (Just (Param k0 v)) Nothing = if k0 == k then Right v else leftErr
-        go (Just (Param k0 v)) (Just xs)
-          | k0 == k = Right v
-          | otherwise = go (head xs) (tail xs)
+param k = ActionT $ except <<< note err <<< findMap doMap =<< snd <$> ask
+  where doMap :: Param -> Maybe String
+        doMap (Param k0 v) | k0 == k = Just v
+                           | otherwise = Nothing
 
-        leftErr = Left $ error $ "param: " <> k <> " is required"
+        err = error $ "param: " <> k <> " is required"
 
 newtype Pattern = Pattern (String -> Maybe (Array Param))
 
@@ -197,16 +192,11 @@ respond pat action = liftEffect <<< flip addRoute (Route pat action) =<< ask
 data MatchRoute opts m a = MatchRoute (Array Param) (ActionT opts m a)
 
 matchRoute :: forall opts m a. String -> Array (Route opts m a) -> Maybe (MatchRoute opts m a)
-matchRoute xs rs = go (head rs) (tail rs)
-  where go :: forall opts0 m0 a0. Maybe (Route opts0 m0 a0) -> Maybe (Array (Route opts0 m0 a0)) -> Maybe (MatchRoute opts0 m0 a0)
-        go Nothing _ = Nothing
-        go (Just (Route (Pattern f) m)) ys =
-          case f xs of
-            Just p -> Just (MatchRoute p m)
-            Nothing ->
-              case ys of
-                Nothing -> Nothing
-                Just ys' -> go (head ys') (tail ys')
+matchRoute xs = findMap doMap
+  where doMap :: forall opts0 m0 a0. Route opts0 m0 a0 -> Maybe (MatchRoute opts0 m0 a0)
+        doMap (Route (Pattern f) m) = do
+           p <- f xs
+           pure $ MatchRoute p m
 
 reply :: forall opts a m. MonadEffect m => opts -> String -> PlanT opts a m (Either Error a)
 reply opts xs = do
